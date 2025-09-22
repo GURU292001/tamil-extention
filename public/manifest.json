@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Tanglish Transulator",
+  "description": "Extention that helps to Transulate Tanglish to Tamil .",
+  "version": "1.0",
+  "icons": {
+    "16": "icon8.png"
+  },
+  "action": {
+    "default_popup": "index.html"
+  },
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "permissions": [
+    "storage","scripting"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["worker.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

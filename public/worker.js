@@ -1,0 +1,495 @@
+console.log("✅ Google Input Tool Extension Loaded");
+
+let suggestionDropdown = null;
+let suggestionList = [];
+let activeSuggestionIndex = 0;
+let currentInputField = null;
+
+(async () => {
+  // 1. Get the active tab in the current window
+  let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  // 2. Inject script into that tab
+  chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: () => {
+      // Add Google Fonts link
+      const link = document.createElement("link");
+      link.href =
+        "https://fonts.googleapis.com/css2?family=Noto+Sans+Tamil&display=swap";
+      link.rel = "stylesheet";
+      document.head.appendChild(link);
+
+      // Add custom CSS
+      const style = document.createElement("style");
+      style.innerHTML = `
+        .tamil-font {
+          font-family: 'Noto Sans Tamil', sans-serif !important;
+        }
+      `;
+      document.head.appendChild(style);
+
+      // Apply to body
+      document.body.classList.add("tamil-font");
+    },
+  });
+})();
+
+
+// --- API call ---
+async function fetchTransliteration(word) {
+  const url =
+    "https://inputtools.google.com/request?itc=ta-t-i0-und&num=5&cp=0&cs=1&ie=utf-8&oe=utf-8";
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "text=" + encodeURIComponent(word),
+    });
+    const result = await response.json();
+    console.log("word:", word);
+    console.log("result[1][0][1]:", result[1][0][1]);
+    if (result[0] === "SUCCESS") return result[1][0][1];
+  } catch (error) {
+    console.error("Transliteration failed", error);
+  }
+  return [];
+}
+
+// --- Suggestion box creation ---
+function renderSuggestionDropdown() {
+  if (!suggestionDropdown) {
+    suggestionDropdown = document.createElement("div");
+    suggestionDropdown.style.position = "fixed";
+    suggestionDropdown.style.background = "#fff";
+    suggestionDropdown.style.border = "1px solid #ccc";
+    suggestionDropdown.style.borderRadius = "6px";
+    suggestionDropdown.style.boxShadow = "0 2px 5px rgba(0,0,0,0.2)";
+    suggestionDropdown.style.zIndex = "2147483647";
+    suggestionDropdown.style.fontFamily = "'Noto Sans Tamil', sans-serif";
+    suggestionDropdown.style.fontSize = "14px";
+    suggestionDropdown.style.maxHeight = "150px";
+    suggestionDropdown.style.overflowY = "auto";
+    document.body.appendChild(suggestionDropdown);
+  }
+
+  suggestionDropdown.innerHTML = "";
+  suggestionList.forEach((suggestion, index) => {
+    const option = document.createElement("div");
+    option.textContent = suggestion;
+    option.style.padding = "4px 8px";
+    option.style.cursor = "pointer";
+    option.style.background = index === activeSuggestionIndex ? "#eee" : "#fff";
+
+    option.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      console.log("mouseDown Suggestion:", suggestion);
+      applySuggestionUniversal(suggestion);
+    });
+
+    suggestionDropdown.appendChild(option);
+  });
+}
+
+// --- Hide / show dropdown ---
+function hideSuggestionDropdown() {
+  if (suggestionDropdown) suggestionDropdown.style.display = "none";
+}
+
+function showSuggestionDropdown(x, y) {
+  if (!suggestionDropdown) renderSuggestionDropdown();
+  suggestionDropdown.style.display = "block";
+  suggestionDropdown.style.left = x + "px";
+  suggestionDropdown.style.top = y + "px";
+}
+
+function getInputText(field) {
+  let wholeText =
+    field.tagName === "TEXTAREA" || field.tagName === "INPUT"
+      ? field.value
+      : field.innerText;
+
+  let str = "";
+  for (let i = wholeText.length - 1; i >= 0; i--) {
+    if (wholeText[i] === " ") {
+      break;
+    }
+    str = wholeText[i] + str;
+  }
+
+  // console.log("lastWord:", str);
+
+  return wholeText;
+}
+
+function setInputText(field, text) {
+  if (field.tagName === "TEXTAREA" || field.tagName === "INPUT")
+    field.value = text;
+  else field.innerText = text + " ";
+}
+
+function getCaretIndex(field) {
+  if (field.selectionStart !== undefined) return field.selectionStart;
+  const selection = window.getSelection();
+  return selection.focusOffset;
+}
+function getWordAtCaret() {
+  const selection = window.getSelection();
+
+  if (!selection.rangeCount)
+    return { word: "", start: 0, end: 0, container: null };
+
+  const range = selection.getRangeAt(0);
+  const container = range.startContainer;
+
+  // Text node only
+  if (!container || container.nodeType !== Node.TEXT_NODE) {
+    return { word: "", start: 0, end: 0, container: null };
+  }
+
+  const offset = range.startOffset;
+  const text = container.textContent;
+
+  // Left boundary: find last space before caret
+  let start = offset;
+  while (start > 0 && !/\s/.test(text[start - 1])) start--;
+
+  // Right boundary: find first space after caret
+  let end = offset;
+  while (end < text.length && !/\s/.test(text[end])) end++;
+
+  const word = text.slice(start, end);
+
+  return { word, start, end, container };
+}
+
+// function getWordAtCaret() {
+//   const selection = window.getSelection();
+//   if (!selection.rangeCount) return { word: "", start: 0, end: 0, container: null };
+
+//   const range = selection.getRangeAt(0);
+//   const container = range.startContainer;
+
+//   // We only want text nodes
+//   if (!container || container.nodeType !== Node.TEXT_NODE) {
+//     return { word: "", start: 0, end: 0, container: null };
+//   }
+
+//   const offset = range.startOffset;
+//   const text = container.textContent;
+
+//   // Find word boundaries around caret
+//   const left = text.slice(0, offset).search(/\S+$/);
+//   const right = text.slice(offset).search(/\s/);
+
+//   const start = left === -1 ? offset : left;
+//   const end = right === -1 ? text.length : offset + right;
+
+//   const word = text.slice(start, end);
+
+//   return { word, start, end, container };
+// }
+
+function replaceWordAtCaret(field, start, end, replacement) {
+  const text = getInputText(field);
+
+  // Add replacement + trailing space
+  const updatedText =
+    text.substring(0, start) + replacement + " " + text.substring(end);
+  setInputText(field, updatedText);
+
+  // For input/textarea
+  if (field.selectionStart !== undefined) {
+    field.focus();
+    const caretPosition = start + replacement.length + 1; // +1 for space
+    field.setSelectionRange(caretPosition, caretPosition);
+  } else {
+    // For contenteditable
+    const range = document.createRange();
+    const selection = window.getSelection();
+
+    const textNode = field.firstChild || field;
+    const caretPosition = start + replacement.length + 1; // +1 for space
+
+    range.setStart(textNode, caretPosition);
+    range.collapse(true);
+
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+}
+
+// --- Caret coordinates ---
+function getCaretCoordinates() {
+  let x = 0,
+    y = 0;
+  const selection = window.getSelection();
+  if (selection.rangeCount) {
+    const range = selection.getRangeAt(0).cloneRange();
+    range.collapse(true);
+    const rects = range.getClientRects();
+    if (rects.length > 0) {
+      const rect = rects[0];
+      x = rect.left;
+      y = rect.bottom;
+    }
+  }
+  return { x, y };
+}
+
+// --- Apply suggestion ---
+// function applySuggestion(suggestion) {
+//   const selection = window.getSelection();
+//   if (!selection.rangeCount) return;
+
+//   const range = selection.getRangeAt(0);
+//   const { word, start, end, container } = getWordAtCaret();
+//   if (!word || !container) return;
+
+//   const text = container.textContent;
+//   const textLength = text.length;
+
+//   // --- Detect special char(s) at end of the word ---
+//   const specialCharMatch = word.match(/[.,!?;:/\\]+$/);
+//   const specialChar = specialCharMatch ? specialCharMatch[0] : "";
+
+//   // Remove trailing special char(s) from replacement target
+//   const cleanEnd = specialChar ? end - specialChar.length : end;
+
+//   // Clamp to safe bounds
+//   const safeStart = Math.max(0, Math.min(start, textLength));
+//   const safeEnd = Math.max(0, Math.min(cleanEnd, textLength));
+
+//   // Replace only the actual word
+//   range.setStart(container, safeStart);
+//   range.setEnd(container, safeEnd);
+//   range.deleteContents();
+
+//   // --- Insert new sequence ---
+//   const frag = document.createDocumentFragment();
+//   frag.appendChild(document.createTextNode(suggestion));
+//   if (specialChar) frag.appendChild(document.createTextNode(specialChar));
+//   const spaceNode = document.createTextNode(" ");
+//   frag.appendChild(spaceNode);
+
+//   range.insertNode(frag);
+
+//   // --- Move caret after the space node ---
+//   const newRange = document.createRange();
+//   newRange.setStartAfter(spaceNode);  // ✅ put caret after the space
+//   newRange.collapse(true);
+
+//   selection.removeAllRanges();
+//   selection.addRange(newRange);
+
+//   hideSuggestionDropdown();
+// }
+function applySuggestionUniversal(suggestion, field = currentInputField) {
+  console.log("apply suggestion universel working");
+  if (!field) return;
+
+  // --- Textarea / Input ---
+  if (field.tagName === "TEXTAREA" || field.tagName === "INPUT") {
+    const caretIndex = field.selectionStart;
+    const text = field.value;
+
+    // Find current word boundaries
+    const left = text.slice(0, caretIndex).search(/\S+$/);
+    const right = text.slice(caretIndex).search(/\s/);
+
+    const start = left === -1 ? caretIndex : left;
+    const end = right === -1 ? text.length : caretIndex + right;
+
+    // Replace word and add space
+    const updatedText =
+      text.substring(0, start) + suggestion + " " + text.substring(end);
+    console.log("textarea/input- updatedText:", updatedText);
+    field.value = updatedText;
+
+    // Move caret after the inserted word + space
+    const caretPosition = start + suggestion.length + 1;
+    field.focus();
+    field.setSelectionRange(caretPosition, caretPosition);
+
+    hideSuggestionDropdown();
+    return;
+  }
+
+  // --- Contenteditable ---
+  const selection = window.getSelection();
+  if (!selection.rangeCount) return;
+
+  const range = selection.getRangeAt(0);
+  const { word, start, end, container } = getWordAtCaret();
+  if (!word || !container) return;
+
+  const text = container.textContent;
+  const textLength = text.length;
+
+  // Detect special characters at the end
+  const specialCharMatch = word.match(/[.,!?;:/\\]+$/);
+  const specialChar = specialCharMatch ? specialCharMatch[0] : "";
+
+  // Adjust replacement end
+  const cleanEnd = specialChar ? end - specialChar.length : end;
+  const safeStart = Math.max(0, Math.min(start, textLength));
+  const safeEnd = Math.max(0, Math.min(cleanEnd, textLength));
+
+  range.setStart(container, safeStart);
+  range.setEnd(container, safeEnd);
+  range.deleteContents();
+
+  // Insert Tamil word + punctuation + space
+  const frag = document.createDocumentFragment();
+  console.log("frag:", frag);
+  console.log("specialChar:", specialChar);
+  console.log("suggestion:", suggestion);
+  // frag.appendChild(document.createTextNode(suggestion));
+
+  const suggestionSpan = document.createElement("span");
+  suggestionSpan.textContent = suggestion;
+  suggestionSpan.classList.add("tamil-font");
+  frag.appendChild(suggestionSpan);
+
+  if (specialChar) frag.appendChild(document.createTextNode(specialChar));
+  const spaceNode = document.createTextNode(" ");
+  frag.appendChild(spaceNode);
+
+  range.insertNode(frag);
+
+  // Move caret after the space
+  const newRange = document.createRange();
+  newRange.setStartAfter(spaceNode);
+  newRange.collapse(true);
+
+  selection.removeAllRanges();
+  selection.addRange(newRange);
+
+  hideSuggestionDropdown();
+}
+
+// function applySuggestion(suggestion) {
+//   const selection = window.getSelection();
+//   if (!selection.rangeCount) return;
+
+//   const range = selection.getRangeAt(0);
+//   const { word, start, end, container } = getWordAtCaret();
+
+//   if (!word || !container) return;
+
+//   const text = container.textContent;
+//   const textLength = text.length;
+
+//   // --- Detect special character at the end of the word ---
+//   const specialCharMatch = word.match(/[.,!?;:/\\]+$/);
+//   const specialChar = specialCharMatch ? specialCharMatch[0] : "";
+
+//   // Remove trailing special char(s) from replacement target
+//   const cleanEnd = specialChar ? end - specialChar.length : end;
+
+//   // Clamp values
+//   const safeStart = Math.max(0, Math.min(start, textLength));
+//   const safeEnd = Math.max(0, Math.min(cleanEnd, textLength));
+
+//   // Replace only the actual word (not the special char)
+//   range.setStart(container, safeStart);
+//   range.setEnd(container, safeEnd);
+
+//   range.deleteContents();
+//   range.insertNode(document.createTextNode(suggestion));
+
+//   // If there was a special char, keep it after Tamil word
+//   if (specialChar) {
+//     range.insertNode(document.createTextNode(specialChar));
+//   }
+
+//   // Always add a space after replacement
+//   range.insertNode(document.createTextNode(" "));
+
+//   // --- Move caret exactly after the space ---
+//   const newRange = document.createRange();
+//   const caretPos = safeStart + suggestion.length + specialChar.length + 1;
+//   newRange.setStart(container, Math.min(caretPos, container.textContent.length));
+//   newRange.collapse(true);
+
+//   selection.removeAllRanges();
+//   selection.addRange(newRange);
+
+//   hideSuggestionDropdown();
+// }
+
+// --- Handle input ---
+async function handleInput(event) {
+  currentInputField = event.target;
+
+  const { word } = getWordAtCaret();
+  console.log("caret word:", word);
+
+  if (!word) return hideSuggestionDropdown();
+
+  suggestionList = await fetchTransliteration(word);
+  if (!suggestionList.length) return hideSuggestionDropdown();
+
+  activeSuggestionIndex = 0;
+  renderSuggestionDropdown();
+
+  // Position dropdown near caret
+  const coords = getCaretCoordinates();
+  showSuggestionDropdown(coords.x, coords.y);
+}
+// --- Handle keyboard navigation ---
+function handleKeyDown(event) {
+  if (!suggestionDropdown || suggestionDropdown.style.display === "none") {
+    if (event.ctrlKey && event.code === "Space") {
+      event.preventDefault();
+      handleInput({ target: currentInputField });
+    }
+    return;
+  }
+
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    activeSuggestionIndex = (activeSuggestionIndex + 1) % suggestionList.length;
+    renderSuggestionDropdown();
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    activeSuggestionIndex =
+      (activeSuggestionIndex - 1 + suggestionList.length) %
+      suggestionList.length;
+    renderSuggestionDropdown();
+  } else if (event.key === "Enter" || event.key === " ") {
+    console.log("activeSuggestionIndex:", activeSuggestionIndex);
+    console.log("suggestionList:", suggestionList);
+    console.log(
+      "enter clicked suggestionList[activeSuggestionIndex]:",
+      suggestionList[activeSuggestionIndex]
+    );
+    event.preventDefault();
+
+    applySuggestionUniversal(suggestionList[activeSuggestionIndex]);
+  } else if (event.key === "Escape") {
+    hideSuggestionDropdown();
+  }
+}
+
+// --- Attach to inputs/contenteditables ---
+document.addEventListener("focusin", (event) => {
+  if (
+    event.target.tagName === "TEXTAREA" ||
+    event.target.tagName === "INPUT" ||
+    event.target.getAttribute("contenteditable") === "true"
+  ) {
+    currentInputField = event.target;
+    console.log("focusin activated");
+    currentInputField.addEventListener("input", handleInput);
+    currentInputField.addEventListener("keydown", handleKeyDown);
+  }
+});
+
+document.addEventListener("focusout", (event) => {
+  if (event.target === currentInputField) {
+    hideSuggestionDropdown();
+    currentInputField.removeEventListener("input", handleInput);
+    currentInputField.removeEventListener("keydown", handleKeyDown);
+  }
+});

@@ -13,8 +13,11 @@
     "http://*/*",
     "https://*/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "permissions": [
-    "storage","scripting"
+    "storage","scripting","activeTab","tabs"
   ],
   "content_scripts": [
     {

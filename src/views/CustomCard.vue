@@ -1,64 +1,114 @@
 <template>
-    <Card class="w-[500px]">
-        <CardHeader>
-            <CardTitle>Transulate Extention 1.2</CardTitle>
-            <CardDescription>Use this Extention to convert Thanglish to Tamil</CardDescription>
-        </CardHeader>
-        <CardContent class="break-words">
-       <!-- <content/> -->
-          <Textarea v-model="data"></Textarea>
-        </CardContent>
-       
-    </Card>
+  <Card class="w-[400px] h-[400px] p-4 m-2 border border-gray-200 rounded-lg shadow-lg">
+    <CardHeader class="flex flex-row p-2 rounded-t-lg">
+      <!-- Left Column (Title + Description) -->
+      <div class="w-2/3 h-full p-2 flex flex-col justify-center">
+        <CardTitle class="text-lg font-bold">Translate Extension 1.2</CardTitle>
+        <CardDescription class="text-sm mt-1">
+          Use this extension to convert native to any Language
+        </CardDescription>
+      </div>
+
+      <!-- Right Column (Switch) -->
+      <div class="w-1/3 h-full flex justify-center items-center">
+        <div class="flex items-center space-x-2">
+          <label for="enableSwitch" class="text-sm font-medium text-gray-700">Enable</label>
+          <!-- Switch controlled by :model-value and update event -->
+          <Switch
+            id="enableSwitch"
+            :model-value="enable"
+            @update:modelValue="val => { enable = val; toggleFeature(val) }"
+            class="peer"
+          />
+        </div>
+      </div>
+    </CardHeader>
+
+    <CardContent class="p-2">
+      <dropdown :items="supportedLanguages" />
+    </CardContent>
+  </Card>
 </template>
+
 <script setup>
-import { ref, watch, nextTick, reactive, onMounted } from 'vue'
-import content from './content.vue';
-// import Textarea from '@/components/ui/textarea/Textarea.vue';
+import { ref, reactive, onMounted } from "vue";
+import Switch from "../components/ui/switch/Switch.vue";
+import dropdown from "./dropdown.vue";
 import {
-    Card, CardContent,
-    CardDescription,
-    CardFooter,
-    CardHeader,
-    CardTitle,
-} from '@/components/ui/card';
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
-// import googleTransliterate from 'google-input-tool'
-// // import { watch } from 'fs';
-// const data = ref("")
-// let dropdown = reactive([])
-// watch(data, (val) => {
-//     console.log("value from watcher :", val)
-//     Transcript(val)
-// })
-// const Transcript = (val) => {
-//   // get last word efficiently
-//   let sourceText = "";
-//   for (let i = val?.length - 1; i >= 0; i--) {
-//     if (val[i] === " ") break;
-//     sourceText = val[i] + sourceText;
-//   }
-//   console.log("lastword:", sourceText);
+const enable = ref(false);
 
-//   let inputLanguage = "ta-t-i0-und";
-//   let maxResult = 20;
-//   let request = new XMLHttpRequest();
+const supportedLanguages = reactive([
+  { code: "ta", name: "Tamil" },
+  { code: "hi", name: "Hindi" },
+  { code: "bn", name: "Bengali" },
+  { code: "te", name: "Telugu" },
+  { code: "ml", name: "Malayalam" },
+  { code: "kn", name: "Kannada" },
+  { code: "mr", name: "Marathi" },
+  { code: "gu", name: "Gujarati" },
+  { code: "pa", name: "Punjabi" },
+  { code: "or", name: "Odia" },
+  { code: "as", name: "Assamese" },
+  { code: "ne", name: "Nepali" },
+  { code: "ur", name: "Urdu" },
+  { code: "si", name: "Sinhalese" },
+]);
 
-// googleTransliterate(request, sourceText, inputLanguage, maxResult).then(
-//   function (response) {
-//     console.log("Raw Response:", response);
+onMounted(() => {
+    console.log("onmount working")
+  // ask background for saved state
+  chrome.runtime.sendMessage({ type: "GET_FEATURE_STATE" }, (resp) => {
+    console.log("[popup] Current stored state:", resp);
+    if (resp && typeof resp.enable === "boolean") {
+      enable.value = resp.enable;
+    }
+  });
+});
 
-//     // flatten into clean array
-//     dropdown.value = parseSuggestions(response);
+const toggleFeature = (value) => {
+  console.log("[popup] Toggle clicked:", value);
 
-//     console.log("Suggestions:", dropdown.value);
-//   }
-// );
+  // Send to background (not content script)
+  chrome.runtime.sendMessage(
+    { type: "TOGGLE_FEATURE", enable: value },
+    (resp) => {
+      if (chrome.runtime.lastError) {
+        console.log("⚠️ Error:", chrome.runtime.lastError.message);
+      } else {
+        console.log("✅ Background updated:", resp);
+      }
+    }
+  );
+};
+
+
+// const toggleFeature = (value) => {
+//   console.log("[popup] Toggle clicked:", value);
+
+//   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+//     if (!tabs[0]) return;
+
+//     chrome.tabs.sendMessage(
+//       tabs[0].id,
+//       { type: "TOGGLE_FEATURE", enable: value },
+//       (resp) => {
+//         if (chrome.runtime.lastError) {
+//           console.log(
+//             "⚠️ No response from content script:",
+//             chrome.runtime.lastError.message
+//           );
+//         } else {
+//           console.log("✅ Message sent, got response:", resp);
+//         }
+//       }
+//     );
+//   });
 // };
-
-// const parseSuggestions = (response) => {
-//   if (!Array.isArray(response)) return [];
-//   return response.map(item => item[0]);
-// };
-
 </script>

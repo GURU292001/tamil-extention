@@ -5,56 +5,129 @@ let suggestionList = [];
 let activeSuggestionIndex = 0;
 let currentInputField = null;
 
-(async () => {
-  // 1. Get the active tab in the current window
-  let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+console.log("👋 content.js injected");
+let featureEnabled = false;
 
-  // 2. Inject script into that tab
-  chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: () => {
-      // Add Google Fonts link
-      const link = document.createElement("link");
-      link.href =
-        "https://fonts.googleapis.com/css2?family=Noto+Sans+Tamil&display=swap";
-      link.rel = "stylesheet";
-      document.head.appendChild(link);
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "TOGGLE_FEATURE") {
+    featureEnabled = message.enable;
+    console.log("📩 Content script updated, featureEnabled:", featureEnabled);
 
-      // Add custom CSS
-      const style = document.createElement("style");
-      style.innerHTML = `
-        .tamil-font {
-          font-family: 'Noto Sans Tamil', sans-serif !important;
-        }
-      `;
-      document.head.appendChild(style);
+    // Apply/disable your DOM manipulations or functions based on featureEnabled
+    if (!featureEnabled) {
+      // hide dropdown, disable listeners, etc.
+    } else {
+      // enable your input listeners and functionality
+    }
 
-      // Apply to body
-      document.body.classList.add("tamil-font");
-    },
-  });
+    sendResponse({ status: "ok" });
+  } 
+  else if (message.type === "GET_FEATURE_STATE") {
+    sendResponse({ enable: featureEnabled });
+  }
+
+  return true;
+});
+
+
+
+
+// Since we're already in the page as a content script, directly apply the font
+(function injectTamilFont() {
+  // Check if already applied
+  if (document.querySelector('#tamil-font-injected')) {
+    console.log('Tamil font already injected');
+    return;
+  }
+
+  // Marker
+  const marker = document.createElement('meta');
+  marker.id = 'tamil-font-injected';
+  document.head.appendChild(marker);
+
+  // Load Google Font
+  const link = document.createElement("link");
+  link.href = "https://fonts.googleapis.com/css2?family=Noto+Sans+Tamil:wght@100;200;300;400;500;600;700;800;900&display=swap";
+  link.rel = "stylesheet";
+  link.onload = () => console.log("Noto Sans Tamil loaded");
+  document.head.appendChild(link);
+
+  // Scoped style (only for `.tamil-clone` elements)
+  const style = document.createElement("style");
+  style.textContent = `
+    .tamil-font {
+      font-family: 'Noto Sans Tamil', 'Latha', 'Vijaya', sans-serif !important;
+    }
+  `;
+  document.head.appendChild(style);
+
+  console.log("Tamil font available. Use .tamil-clone on your elements.");
 })();
+
 
 
 // --- API call ---
 async function fetchTransliteration(word) {
   const url =
     "https://inputtools.google.com/request?itc=ta-t-i0-und&num=5&cp=0&cs=1&ie=utf-8&oe=utf-8";
+
   try {
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: "text=" + encodeURIComponent(word),
     });
+
     const result = await response.json();
-    console.log("word:", word);
-    console.log("result[1][0][1]:", result[1][0][1]);
-    if (result[0] === "SUCCESS") return result[1][0][1];
+
+    if (result[0] === "SUCCESS") {
+      let list = [];
+
+      // Safe spreading (Google gives [ [typedWord, [suggestions...] ] ])
+      if (result[1] && result[1][0]) {
+        if (Array.isArray(result[1][0][1])) {
+          list.push(...result[1][0][1]); // suggestions
+        }
+        if (Array.isArray(result[1][0][0])) {
+          list.push(...result[1][0][0]); // original word(s)
+        } else {
+          list.push(result[1][0][0]); // single word
+        }
+      }
+
+      console.log("list:", list);
+      console.log("word:", word);
+      return list;
+    }
   } catch (error) {
     console.error("Transliteration failed", error);
   }
-  return [];
+
+  return [word]; // fallback
 }
+
+// async function fetchTransliteration(word) {
+//   const url =
+//     "https://inputtools.google.com/request?itc=ta-t-i0-und&num=5&cp=0&cs=1&ie=utf-8&oe=utf-8";
+//   try {
+//     const response = await fetch(url, {
+//       method: "POST",
+//       headers: { "Content-Type": "application/x-www-form-urlencoded" },
+//       body: "text=" + encodeURIComponent(word),
+//     });
+//     const result = await response.json();
+//     let list =[]
+//     list=list.push(...result[1][0][1])
+//     list.push(...result[1][0][0])
+//     console.log("list:",list)
+//     console.log("word:", word);
+//     console.log("result[1][0][1]:", result[1][0][1]);
+//     if (result[0] === "SUCCESS") return result[1][0][1];
+//   } catch (error) {
+//     console.error("Transliteration failed", error);
+//   }
+//   return [];
+// }
 
 // --- Suggestion box creation ---
 function renderSuggestionDropdown() {
@@ -163,32 +236,6 @@ function getWordAtCaret() {
   return { word, start, end, container };
 }
 
-// function getWordAtCaret() {
-//   const selection = window.getSelection();
-//   if (!selection.rangeCount) return { word: "", start: 0, end: 0, container: null };
-
-//   const range = selection.getRangeAt(0);
-//   const container = range.startContainer;
-
-//   // We only want text nodes
-//   if (!container || container.nodeType !== Node.TEXT_NODE) {
-//     return { word: "", start: 0, end: 0, container: null };
-//   }
-
-//   const offset = range.startOffset;
-//   const text = container.textContent;
-
-//   // Find word boundaries around caret
-//   const left = text.slice(0, offset).search(/\S+$/);
-//   const right = text.slice(offset).search(/\s/);
-
-//   const start = left === -1 ? offset : left;
-//   const end = right === -1 ? text.length : offset + right;
-
-//   const word = text.slice(start, end);
-
-//   return { word, start, end, container };
-// }
 
 function replaceWordAtCaret(field, start, end, replacement) {
   const text = getInputText(field);
@@ -236,54 +283,6 @@ function getCaretCoordinates() {
   }
   return { x, y };
 }
-
-// --- Apply suggestion ---
-// function applySuggestion(suggestion) {
-//   const selection = window.getSelection();
-//   if (!selection.rangeCount) return;
-
-//   const range = selection.getRangeAt(0);
-//   const { word, start, end, container } = getWordAtCaret();
-//   if (!word || !container) return;
-
-//   const text = container.textContent;
-//   const textLength = text.length;
-
-//   // --- Detect special char(s) at end of the word ---
-//   const specialCharMatch = word.match(/[.,!?;:/\\]+$/);
-//   const specialChar = specialCharMatch ? specialCharMatch[0] : "";
-
-//   // Remove trailing special char(s) from replacement target
-//   const cleanEnd = specialChar ? end - specialChar.length : end;
-
-//   // Clamp to safe bounds
-//   const safeStart = Math.max(0, Math.min(start, textLength));
-//   const safeEnd = Math.max(0, Math.min(cleanEnd, textLength));
-
-//   // Replace only the actual word
-//   range.setStart(container, safeStart);
-//   range.setEnd(container, safeEnd);
-//   range.deleteContents();
-
-//   // --- Insert new sequence ---
-//   const frag = document.createDocumentFragment();
-//   frag.appendChild(document.createTextNode(suggestion));
-//   if (specialChar) frag.appendChild(document.createTextNode(specialChar));
-//   const spaceNode = document.createTextNode(" ");
-//   frag.appendChild(spaceNode);
-
-//   range.insertNode(frag);
-
-//   // --- Move caret after the space node ---
-//   const newRange = document.createRange();
-//   newRange.setStartAfter(spaceNode);  // ✅ put caret after the space
-//   newRange.collapse(true);
-
-//   selection.removeAllRanges();
-//   selection.addRange(newRange);
-
-//   hideSuggestionDropdown();
-// }
 function applySuggestionUniversal(suggestion, field = currentInputField) {
   console.log("apply suggestion universel working");
   if (!field) return;
@@ -331,9 +330,10 @@ function applySuggestionUniversal(suggestion, field = currentInputField) {
   const specialChar = specialCharMatch ? specialCharMatch[0] : "";
 
   // Adjust replacement end
-  const cleanEnd = specialChar ? end - specialChar.length : end;
+  // const cleanEnd =  end;
+  // const cleanEnd = specialChar ? end - specialChar.length : end;
   const safeStart = Math.max(0, Math.min(start, textLength));
-  const safeEnd = Math.max(0, Math.min(cleanEnd, textLength));
+  const safeEnd = Math.max(0, Math.min(end, textLength));
 
   range.setStart(container, safeStart);
   range.setEnd(container, safeEnd);
@@ -346,15 +346,34 @@ function applySuggestionUniversal(suggestion, field = currentInputField) {
   console.log("suggestion:", suggestion);
   // frag.appendChild(document.createTextNode(suggestion));
 
-  const suggestionSpan = document.createElement("span");
-  suggestionSpan.textContent = suggestion;
-  suggestionSpan.classList.add("tamil-font");
-  frag.appendChild(suggestionSpan);
+  // const suggestionSpan = document.createElement("span");
+  // suggestionSpan.textContent = suggestion;
+  // suggestionSpan.classList.add("tamil-font");
+  // frag.appendChild(suggestionSpan);
+
+    // const frag = document.createDocumentFragment();
+  const isTamil = /[\u0B80-\u0BFF]/.test(suggestion); // Tamil char check
+
+  if (isTamil) {
+    const suggestionSpan = document.createElement("span");
+    suggestionSpan.textContent = suggestion;
+    suggestionSpan.classList.add("tamil-font"); // only Tamil gets styled
+    frag.appendChild(suggestionSpan);
+  } else {
+    frag.appendChild(document.createTextNode(suggestion)); // plain English
+  }
+
+
+
+
+
 
   if (specialChar) frag.appendChild(document.createTextNode(specialChar));
-  const spaceNode = document.createTextNode(" ");
+  // console.log("`safeEnd`:",safeEnd)
+const spaceNode = document.createTextNode("\u00A0");
   frag.appendChild(spaceNode);
-
+  console.log("frag:",frag)
+  // console.log("suggestionSpan:",suggestionSpan)
   range.insertNode(frag);
 
   // Move caret after the space
@@ -367,56 +386,6 @@ function applySuggestionUniversal(suggestion, field = currentInputField) {
 
   hideSuggestionDropdown();
 }
-
-// function applySuggestion(suggestion) {
-//   const selection = window.getSelection();
-//   if (!selection.rangeCount) return;
-
-//   const range = selection.getRangeAt(0);
-//   const { word, start, end, container } = getWordAtCaret();
-
-//   if (!word || !container) return;
-
-//   const text = container.textContent;
-//   const textLength = text.length;
-
-//   // --- Detect special character at the end of the word ---
-//   const specialCharMatch = word.match(/[.,!?;:/\\]+$/);
-//   const specialChar = specialCharMatch ? specialCharMatch[0] : "";
-
-//   // Remove trailing special char(s) from replacement target
-//   const cleanEnd = specialChar ? end - specialChar.length : end;
-
-//   // Clamp values
-//   const safeStart = Math.max(0, Math.min(start, textLength));
-//   const safeEnd = Math.max(0, Math.min(cleanEnd, textLength));
-
-//   // Replace only the actual word (not the special char)
-//   range.setStart(container, safeStart);
-//   range.setEnd(container, safeEnd);
-
-//   range.deleteContents();
-//   range.insertNode(document.createTextNode(suggestion));
-
-//   // If there was a special char, keep it after Tamil word
-//   if (specialChar) {
-//     range.insertNode(document.createTextNode(specialChar));
-//   }
-
-//   // Always add a space after replacement
-//   range.insertNode(document.createTextNode(" "));
-
-//   // --- Move caret exactly after the space ---
-//   const newRange = document.createRange();
-//   const caretPos = safeStart + suggestion.length + specialChar.length + 1;
-//   newRange.setStart(container, Math.min(caretPos, container.textContent.length));
-//   newRange.collapse(true);
-
-//   selection.removeAllRanges();
-//   selection.addRange(newRange);
-
-//   hideSuggestionDropdown();
-// }
 
 // --- Handle input ---
 async function handleInput(event) {
@@ -464,6 +433,8 @@ function handleKeyDown(event) {
       "enter clicked suggestionList[activeSuggestionIndex]:",
       suggestionList[activeSuggestionIndex]
     );
+    console.log("length:",suggestionList.length)
+    console.log("activeSuggestionIndex:",activeSuggestionIndex)
     event.preventDefault();
 
     applySuggestionUniversal(suggestionList[activeSuggestionIndex]);

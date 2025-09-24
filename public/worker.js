@@ -8,6 +8,16 @@ let currentInputField = null;
 console.log("👋 content.js injected");
 let featureEnabled = false;
 
+chrome.storage.local.get("featureEnabled", (data) => {
+  console.log("data.",data)
+  // console.log("data.featureEnabled:",data.featureEnabled)
+  if (typeof data.featureEnabled === "boolean") {
+    featureEnabled = data.featureEnabled;
+    console.log("🔄 Restored featureEnabled from storage:", featureEnabled);
+  }
+});
+
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "TOGGLE_FEATURE") {
     featureEnabled = message.enable;
@@ -480,6 +490,7 @@ function handleKeyDown(event) {
 
 // --- Attach to inputs/contenteditables ---
 document.addEventListener("focusin", (event) => {
+  if(!featureEnabled)return
   if (
     event.target.tagName === "TEXTAREA" ||
     event.target.tagName === "INPUT" ||
@@ -493,6 +504,7 @@ document.addEventListener("focusin", (event) => {
 });
 
 document.addEventListener("focusout", (event) => {
+  if(!featureEnabled)return
   if (event.target === currentInputField) {
     hideSuggestionDropdown();
     currentInputField.removeEventListener("input", handleInput);

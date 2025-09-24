@@ -231,10 +231,44 @@ function getWordAtCaret() {
   let end = offset;
   while (end < text.length && !/\s/.test(text[end])) end++;
 
-  const word = text.slice(start, end);
 
+  const word = text.slice(start, end);
+  console.log("word, start, end, container",word, start, end, container)
   return { word, start, end, container };
 }
+// function getWordAtCaret() {
+//   const selection = window.getSelection();
+
+//   if (!selection.rangeCount)
+//     return { word: "", start: 0, end: 0, container: null };
+
+//   const range = selection.getRangeAt(0);
+//   const container = range.startContainer;
+
+//   // Only proceed if selection is in a text node
+//   if (!container || container.nodeType !== Node.TEXT_NODE) {
+//     return { word: "", start: 0, end: 0, container: null };
+//   }
+
+//   const offset = range.startOffset;
+//   const text = container.textContent;
+
+//   // Find word boundaries based on whitespace
+//   let start = offset;
+//   while (start > 0 && !/\s/.test(text[start - 1])) start--;
+
+//   let end = offset;
+//   while (end < text.length && !/\s/.test(text[end])) end++;
+
+//   // Extract the word including any punctuation
+//   let rawWord = text.slice(start, end);
+
+//   // Remove surrounding punctuation like .,!? etc.
+//   const cleanedWord = rawWord.replace(/^[^\w\u00C0-\u024F]+|[^\w\u00C0-\u024F]+$/g, "");
+
+//   return { word: cleanedWord, start, end, container };
+// }
+
 
 
 function replaceWordAtCaret(field, start, end, replacement) {
@@ -326,7 +360,8 @@ function applySuggestionUniversal(suggestion, field = currentInputField) {
   const textLength = text.length;
 
   // Detect special characters at the end
-  const specialCharMatch = word.match(/[.,!?;:/\\]+$/);
+  // const specialCharMatch = word.match(/[.,!?;:/\\]+$/);
+  const specialCharMatch = word.match(/[,/\\]+$/);
   const specialChar = specialCharMatch ? specialCharMatch[0] : "";
 
   // Adjust replacement end

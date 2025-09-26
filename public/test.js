@@ -1,47 +1,206 @@
 console.log("✅ Google Input Tool Extension Loaded");
-// working code for toogle
+// complete working except toogle
+// changed code for toogle
 let suggestionDropdown = null;
 let suggestionList = [];
 let activeSuggestionIndex = 0;
 let currentInputField = null;
-console.log("✅ Google Input Tool Extension Loaded");
+let active = false;
 
-// Restore persisted state on load
+console.log("👋 content.js injected");
+let featureEnabled = false;
+
+// chrome.storage.local.get("featureEnabled", (data) => {
+//   console.log("data.", data);
+//   // console.log("data.featureEnabled:",data.featureEnabled)
+//   if (typeof data.featureEnabled === "boolean") {
+//     featureEnabled = data.featureEnabled;
+//     console.log("🔄 Restored featureEnabled from storage:", featureEnabled);
+//       // ✅ Immediately inject toggle buttons into existing fields
+//     if (featureEnabled) {
+//       startFeature();
+//     } else {
+//       stopFeature();
+//     }
+//   }
+// });
+
 chrome.storage.local.get("featureEnabled", (data) => {
-  console.log("📦 Restored state in content.js:", data.featureEnabled);
+  if (typeof data.featureEnabled === "boolean") {
+    featureEnabled = data.featureEnabled;
+    console.log("🔄 Restored featureEnabled:", featureEnabled);
+    
+    // if (featureEnabled) {
+    //   if (document.readyState === "loading") {
+    //     document.addEventListener("DOMContentLoaded", startFeature);
+    //   } else {
+    //     startFeature();
+    //   }
+    // } else {
+    //   stopFeature();
+    // }
+  }
+});
+
+
+// worker.js (content script)
+
+// Global state
+// let featureEnabled = false;
+let observer = null;
+
+// Inject toggle into a field
+function addToggleToField(field) {
+  if (field.dataset.toggleAttached) return;
+  field.dataset.toggleAttached = "true";
+
+  field.style.margin = "0";
+
+  // Make wrapper for positioning
+  const wrapper = document.createElement("span");
+  wrapper.style.position = "relative";
+  wrapper.style.display = "inline-flex";
+  wrapper.style.alignItems = "center";
+  wrapper.style.width = field.offsetWidth + "px";
+  wrapper.style.height = field.offsetHeight + "px";
+
+  // Wrap the field
+  field.parentNode.insertBefore(wrapper, field);
+  wrapper.appendChild(field);
+
+  // Create toggle button
+   const toggleBtn = document.createElement("button");
+  toggleBtn.textContent = "OFF";
+  toggleBtn.style.position = "absolute";
+  toggleBtn.style.right = "4px";
+  toggleBtn.style.bottom = "4px";
+  toggleBtn.style.padding = "2px 6px";
+  toggleBtn.style.fontSize = "12px";
+  toggleBtn.style.cursor = "pointer";
+  toggleBtn.style.zIndex = "9999";
+  toggleBtn.style.border = "none";
+  toggleBtn.style.borderRadius = "3px";
+  toggleBtn.style.color = "#fff";
+  toggleBtn.style.background = "#f44336";
+
+  // Local active state
+  toggleBtn.addEventListener("click", () => {
+    active = !active;
+    toggleBtn.textContent = active ? "ON" : "OFF";
+    toggleBtn.style.background = active ?  "#4caf50" : "#f44336";
+    console.log("📩 Toggle clicked for:", field, "State:", active);
+
+    // Notify background.js (optional)
+    chrome.runtime.sendMessage({
+      type: "FIELD_TOGGLE",
+      fieldId: field.name || field.id || "anonymous",
+      enabled: active,
+    });
+  });
+
+  wrapper.appendChild(toggleBtn);
+}
+
+
+// Start observing + injecting
+function startFeature() {
+  console.log("✅ Feature enabled in worker.js");
+  document.querySelectorAll("input[type='text'], textarea, [contenteditable='true']").forEach(addToggleToField);
+  // document.querySelectorAll("input[type='text'], textarea, [contenteditable='true']").forEach(addToggleToField);
+
+  observer = new MutationObserver((mutations) => {
+    if (!featureEnabled) return;
+    mutations.forEach((m) => {
+      m.addedNodes.forEach((node) => {
+        if (node.nodeType === 1) {
+          if (node.matches("input[type='text'],textarea, [contenteditable='true']")) {
+            addToggleToField(node);
+          }
+          
+          node.querySelectorAll?.(" input[type='text'],textarea, [contenteditable='true']").forEach(addToggleToField);
+        }
+      });
+    });
+  });
+  
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+// Stop observing + clean up
+function stopFeature() {
+  console.log("⛔ Feature disabled in worker.js");
+  if (observer) {
+    observer.disconnect();
+    observer = null;
+  }
+  // Remove wrappers & buttons
+  document.querySelectorAll("[data-toggle-attached]").forEach((field) => {
+    const wrapper = field.parentNode;
+    if (
+      wrapper &&
+      wrapper.tagName === "DIV" &&
+      wrapper.style.position === "relative"
+    ) {
+      wrapper.parentNode.insertBefore(field, wrapper);
+      wrapper.remove();
+    }
+    field.removeAttribute("data-toggle-attached");
+  });
+}
+
+// Listen for background toggle messages
+// chrome.runtime.onMessage.addListener((message) => {
+//   if (message.type === "TOGGLE_FEATURE") {
+//     featureEnabled = message.enable;
+//     console.log("old background listener")
+//     // if (featureEnabled) {
+//     //   startFeature();
+//     // } else {
+//     //   stopFeature();
+//     // }
+//   }
+// });
+
+// On load, sync with background state
+chrome.runtime.sendMessage({ type: "GET_FEATURE_STATE" }, (resp) => {
+  if (resp && typeof resp.enable === "boolean") {
+    featureEnabled = resp.enable;
+    console.log("done by GET_FEATURE_STATE")
+    // if (featureEnabled) startFeature();
+  }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "TOGGLE_FEATURE") {
-    console.log("📩 Content script received toggle:", message.enable);
+    featureEnabled = message.enable;
+    console.log("📩 Content script updated, featureEnabled:", featureEnabled);
+    console.log("done by TOGGLE_FEATURE")
 
-    // Persist locally (optional)
-    chrome.storage.local.set({ featureEnabled: message.enable });
-
-    // Respond back
-    sendResponse({ status: "ok", enable: message.enable });
+    sendResponse({ status: "ok" });
+  } else if (message.type === "GET_FEATURE_STATE") {
+    sendResponse({ enable: featureEnabled });
   }
 
   return true;
 });
 
-
 // Since we're already in the page as a content script, directly apply the font
 (function injectTamilFont() {
   // Check if already applied
-  if (document.querySelector('#tamil-font-injected')) {
-    console.log('Tamil font already injected');
+  if (document.querySelector("#tamil-font-injected")) {
+    console.log("Tamil font already injected");
     return;
   }
 
   // Marker
-  const marker = document.createElement('meta');
-  marker.id = 'tamil-font-injected';
+  const marker = document.createElement("meta");
+  marker.id = "tamil-font-injected";
   document.head.appendChild(marker);
 
   // Load Google Font
   const link = document.createElement("link");
-  link.href = "https://fonts.googleapis.com/css2?family=Noto+Sans+Tamil:wght@100;200;300;400;500;600;700;800;900&display=swap";
+  link.href =
+    "https://fonts.googleapis.com/css2?family=Noto+Sans+Tamil:wght@100;200;300;400;500;600;700;800;900&display=swap";
   link.rel = "stylesheet";
   link.onload = () => console.log("Noto Sans Tamil loaded");
   document.head.appendChild(link);
@@ -57,8 +216,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   console.log("Tamil font available. Use .tamil-clone on your elements.");
 })();
-
-
 
 // --- API call ---
 async function fetchTransliteration(word) {
@@ -100,28 +257,6 @@ async function fetchTransliteration(word) {
   return [word]; // fallback
 }
 
-// async function fetchTransliteration(word) {
-//   const url =
-//     "https://inputtools.google.com/request?itc=ta-t-i0-und&num=5&cp=0&cs=1&ie=utf-8&oe=utf-8";
-//   try {
-//     const response = await fetch(url, {
-//       method: "POST",
-//       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-//       body: "text=" + encodeURIComponent(word),
-//     });
-//     const result = await response.json();
-//     let list =[]
-//     list=list.push(...result[1][0][1])
-//     list.push(...result[1][0][0])
-//     console.log("list:",list)
-//     console.log("word:", word);
-//     console.log("result[1][0][1]:", result[1][0][1]);
-//     if (result[0] === "SUCCESS") return result[1][0][1];
-//   } catch (error) {
-//     console.error("Transliteration failed", error);
-//   }
-//   return [];
-// }
 
 // --- Suggestion box creation ---
 function renderSuggestionDropdown() {
@@ -226,10 +361,41 @@ function getWordAtCaret() {
   while (end < text.length && !/\s/.test(text[end])) end++;
 
   const word = text.slice(start, end);
-
+  console.log("word, start, end, container", word, start, end, container);
   return { word, start, end, container };
 }
+// function getWordAtCaret() {
+//   const selection = window.getSelection();
 
+//   if (!selection.rangeCount)
+//     return { word: "", start: 0, end: 0, container: null };
+
+//   const range = selection.getRangeAt(0);
+//   const container = range.startContainer;
+
+//   // Only proceed if selection is in a text node
+//   if (!container || container.nodeType !== Node.TEXT_NODE) {
+//     return { word: "", start: 0, end: 0, container: null };
+//   }
+
+//   const offset = range.startOffset;
+//   const text = container.textContent;
+
+//   // Find word boundaries based on whitespace
+//   let start = offset;
+//   while (start > 0 && !/\s/.test(text[start - 1])) start--;
+
+//   let end = offset;
+//   while (end < text.length && !/\s/.test(text[end])) end++;
+
+//   // Extract the word including any punctuation
+//   let rawWord = text.slice(start, end);
+
+//   // Remove surrounding punctuation like .,!? etc.
+//   const cleanedWord = rawWord.replace(/^[^\w\u00C0-\u024F]+|[^\w\u00C0-\u024F]+$/g, "");
+
+//   return { word: cleanedWord, start, end, container };
+// }
 
 function replaceWordAtCaret(field, start, end, replacement) {
   const text = getInputText(field);
@@ -320,7 +486,8 @@ function applySuggestionUniversal(suggestion, field = currentInputField) {
   const textLength = text.length;
 
   // Detect special characters at the end
-  const specialCharMatch = word.match(/[.,!?;:/\\]+$/);
+  // const specialCharMatch = word.match(/[.,!?;:/\\]+$/);
+  const specialCharMatch = word.match(/[,/\\]+$/);
   const specialChar = specialCharMatch ? specialCharMatch[0] : "";
 
   // Adjust replacement end
@@ -345,7 +512,7 @@ function applySuggestionUniversal(suggestion, field = currentInputField) {
   // suggestionSpan.classList.add("tamil-font");
   // frag.appendChild(suggestionSpan);
 
-    // const frag = document.createDocumentFragment();
+  // const frag = document.createDocumentFragment();
   const isTamil = /[\u0B80-\u0BFF]/.test(suggestion); // Tamil char check
 
   if (isTamil) {
@@ -357,16 +524,11 @@ function applySuggestionUniversal(suggestion, field = currentInputField) {
     frag.appendChild(document.createTextNode(suggestion)); // plain English
   }
 
-
-
-
-
-
   if (specialChar) frag.appendChild(document.createTextNode(specialChar));
   // console.log("`safeEnd`:",safeEnd)
-const spaceNode = document.createTextNode("\u00A0");
+  const spaceNode = document.createTextNode("\u00A0");
   frag.appendChild(spaceNode);
-  console.log("frag:",frag)
+  console.log("frag:", frag);
   // console.log("suggestionSpan:",suggestionSpan)
   range.insertNode(frag);
 
@@ -427,8 +589,8 @@ function handleKeyDown(event) {
       "enter clicked suggestionList[activeSuggestionIndex]:",
       suggestionList[activeSuggestionIndex]
     );
-    console.log("length:",suggestionList.length)
-    console.log("activeSuggestionIndex:",activeSuggestionIndex)
+    console.log("length:", suggestionList.length);
+    console.log("activeSuggestionIndex:", activeSuggestionIndex);
     event.preventDefault();
 
     applySuggestionUniversal(suggestionList[activeSuggestionIndex]);
@@ -438,23 +600,91 @@ function handleKeyDown(event) {
 }
 
 // --- Attach to inputs/contenteditables ---
+// document.addEventListener("focusin", (event) => {
+//   console.log("focusIn:",active, featureEnabled)
+//    if (!featureEnabled) return;
+//   if (featureEnabled) {
+//     // focus in start showing
+//     startFeature();
+//   }
+//   if (!active) return;
+//   if (
+//     event.target.tagName === "TEXTAREA" ||
+//     event.target.tagName === "INPUT" ||
+//     event.target.getAttribute("contenteditable") === "true"
+//   ) {
+//     currentInputField = event.target;
+//     console.log("focusin activated");
+//     currentInputField.addEventListener("input", handleInput);
+//     currentInputField.addEventListener("keydown", handleKeyDown);
+//   }
+// });
+
+// document.addEventListener("focusout", (event) => {
+//   console.log("focusout:",active, featureEnabled)
+//   // if (!featureEnabled) {
+//     // focusout stop showing
+//     // stopFeature();
+//   // }
+//   if (!active) return;
+//   if (event.target === currentInputField) {
+//     hideSuggestionDropdown();
+//     currentInputField.removeEventListener("input", handleInput);
+//     currentInputField.removeEventListener("keydown", handleKeyDown);
+//   }
+// });
+// --------------------------------------------
+
+// let currentInputField = null;
+
+function attachToField(field) {
+  // cleanup previous
+  if (currentInputField) {
+    detachFromField(currentInputField);
+  }
+
+  currentInputField = field;
+
+  console.log("✅ Attached to field:", field);
+
+  field.addEventListener("input", handleInput);
+  field.addEventListener("keydown", handleKeyDown);
+
+  // show dropdown/button immediately if needed
+  startFeature();
+}
+
+function detachFromField(field) {
+  console.log("⛔ Detached from field:", field);
+
+  hideSuggestionDropdown();
+
+  field.removeEventListener("input", handleInput);
+  field.removeEventListener("keydown", handleKeyDown);
+
+  if (currentInputField === field) {
+    currentInputField = null;
+  }
+}
+
+// --- Focus events ---
 document.addEventListener("focusin", (event) => {
+  if (!featureEnabled ) return;
+
+  const target = event.target;
   if (
-    event.target.tagName === "TEXTAREA" ||
-    event.target.tagName === "INPUT" ||
-    event.target.getAttribute("contenteditable") === "true"
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "INPUT" ||
+    target.getAttribute("contenteditable") === "true"
   ) {
-    currentInputField = event.target;
-    console.log("focusin activated");
-    currentInputField.addEventListener("input", handleInput);
-    currentInputField.addEventListener("keydown", handleKeyDown);
+    attachToField(target);
   }
 });
 
 document.addEventListener("focusout", (event) => {
+  if (!featureEnabled) return;
+
   if (event.target === currentInputField) {
-    hideSuggestionDropdown();
-    currentInputField.removeEventListener("input", handleInput);
-    currentInputField.removeEventListener("keydown", handleKeyDown);
+    detachFromField(event.target);
   }
 });
